@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 import cp = require("child_process");
-import * as semver from "semver";
 import path = require("path");
 import vscode = require("vscode");
 import { Logger } from "./logging";
@@ -22,7 +21,7 @@ export class PowerShellProcess {
     public onExited: vscode.Event<void>;
     private onExitedEmitter = new vscode.EventEmitter<void>();
 
-    private consoleTerminal: vscode.Terminal = undefined;
+    public consoleTerminal: vscode.Terminal = undefined;
     private consoleCloseSubscription: vscode.Disposable;
 
     constructor(

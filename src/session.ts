@@ -331,6 +331,10 @@ Type 'help' to get help.
         await this.start(exeNameOverride);
     }
 
+    public getExtensionTerminal(): vscode.Terminal {
+        return this.languageServerProcess.consoleTerminal;
+    }
+
     public getSessionDetails(): IEditorServicesSessionDetails {
         return this.sessionDetails;
     }

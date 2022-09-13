@@ -25,7 +25,7 @@ export function run(): Promise<void> {
     });
 
     return new Promise((c, e) => {
-        glob("**/**.test.js", { cwd: __dirname }, (err, files) => {
+        glob("**/ExtensionTerminal.test.js", { cwd: __dirname }, (err, files) => {
             if (err) {
                 return e(err);
             }

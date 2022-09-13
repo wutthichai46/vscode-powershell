@@ -20,6 +20,7 @@ export interface IPowerShellExtensionClient {
     getPowerShellVersionDetails(uuid: string): Promise<IExternalPowerShellDetails>;
     waitUntilStarted(uuid: string): Promise<void>;
     getStorageUri(): vscode.Uri;
+    getExtensionTerminal(): vscode.Terminal;
 }
 
 /*
@@ -169,6 +170,10 @@ export class ExternalApiFeature extends LanguageClientConsumer implements IPower
 
     public getStorageUri(): vscode.Uri {
         return this.extensionContext.globalStorageUri;
+    }
+
+    public getExtensionTerminal(): vscode.Terminal {
+        return this.sessionManager.getExtensionTerminal();
     }
 
     public dispose() {
