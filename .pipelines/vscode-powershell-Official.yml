@@ -1,0 +1,212 @@
+#################################################################################
+#                               OneBranch Pipelines                             #
+# This pipeline was created by EasyStart from a sample located at:              #
+#   https://aka.ms/obpipelines/easystart/samples                                #
+# Documentation:  https://aka.ms/obpipelines                                    #
+# Yaml Schema:    https://aka.ms/obpipelines/yaml/schema                        #
+# Retail Tasks:   https://aka.ms/obpipelines/tasks                              #
+# Support:        https://aka.ms/onebranchsup                                   #
+#################################################################################
+
+trigger: none
+
+parameters:
+- name: debug
+  displayName: Enable debug output
+  type: boolean
+  default: false
+
+variables:
+  system.debug: ${{ parameters.debug }}
+  BuildConfiguration: Release
+  WindowsContainerImage: onebranch.azurecr.io/windows/ltsc2019/vse2022:latest
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+  pipelines:
+  - pipeline: PowerShellEditorServices-Official
+    source: PowerShellEditorServices-Official
+    trigger:
+      branches:
+      - main
+
+extends:
+  # https://aka.ms/obpipelines/templates
+  template: v2/OneBranch.Official.CrossPlat.yml@templates
+  parameters:
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      asyncSdl:
+        enabled: true
+        forStages: [build]
+    stages:
+    - stage: build
+      jobs:
+      - job: main
+        displayName: Build package
+        pool:
+          type: windows
+        variables:
+          ob_outputDirectory: $(Build.SourcesDirectory)/out
+          ob_sdl_codeSignValidation_excludes: -|**\*.js # Node.js JavaScript signatures are not supported
+        steps:
+          - pwsh: |
+              $version = (Get-Content -Raw -Path package.json | ConvertFrom-Json).version
+              Write-Output "##vso[task.setvariable variable=vsixVersion;isOutput=true]$version"
+              $prerelease = ([semver]$version).Minor % 2 -ne 0
+              if ($prerelease) { $version += "-preview" }
+              Write-Output "##vso[task.setvariable variable=version;isOutput=true]$version"
+              Write-Output "##vso[task.setvariable variable=prerelease;isOutput=true]$prerelease"
+            name: package
+            displayName: Get version from package.json
+          - task: onebranch.pipeline.version@1
+            displayName: Set OneBranch version
+            inputs:
+              system: Custom
+              customVersion: $(package.version)
+          - task: UseNode@1
+            displayName: Use Node 18.x
+            inputs:
+              version: 18.x
+          - task: PowerShell@2
+            displayName: Install PSResources
+            inputs:
+              pwsh: true
+              filePath: tools/installPSResources.ps1
+          - task: DownloadPipelineArtifact@2
+            displayName: Download PowerShellEditorServices
+            inputs:
+              source: specific
+              project: PowerShellCore
+              definition: 2905
+              specificBuildWithTriggering: true
+              artifact: drop_release_github
+              itemPattern: PowerShellEditorServices.zip
+          - task: ExtractFiles@1
+            displayName: Extract PowerShellEditorServices module
+            inputs:
+              archiveFilePatterns: $(Pipeline.Workspace)/PowerShellEditorServices.zip
+              destinationFolder: $(Build.SourcesDirectory)/modules
+          - pwsh: Invoke-Build Build -Configuration $(BuildConfiguration)
+            displayName: Build
+          - task: onebranch.pipeline.signing@1
+            displayName: Sign 1st-party example PowerShell files
+            inputs:
+              command: sign
+              signing_profile: external_distribution
+              search_root: $(Build.SourcesDirectory)/examples
+              files_to_sign: '**/*.ps1;**/*.psd1;**/*.psm1'
+          - pwsh: Invoke-Build Package
+            displayName: Create package
+      - job: test
+        displayName: Build and run tests
+        pool:
+          type: windows
+          isCustom: true
+          name: Azure Pipelines
+          vmImage: windows-latest
+        variables:
+          ob_outputDirectory: $(Build.SourcesDirectory)/out
+          skipComponentGovernanceDetection: true
+        steps:
+          - task: UseNode@1
+            displayName: Use Node 18.x
+            inputs:
+              version: 18.x
+          - task: UseDotNet@2
+            displayName: Use .NET 8.x SDK
+            inputs:
+              packageType: sdk
+              version: 8.x
+          - task: PowerShell@2
+            displayName: Install PSResources
+            inputs:
+              pwsh: true
+              filePath: tools/installPSResources.ps1
+          - task: DownloadPipelineArtifact@2
+            displayName: Download PowerShellEditorServices
+            inputs:
+              source: specific
+              project: PowerShellCore
+              definition: 2905
+              specificBuildWithTriggering: true
+              artifact: drop_release_github
+              itemPattern: PowerShellEditorServices.zip
+          - task: ExtractFiles@1
+            displayName: Extract PowerShellEditorServices module
+            inputs:
+              archiveFilePatterns: $(Pipeline.Workspace)/PowerShellEditorServices.zip
+              destinationFolder: $(Build.SourcesDirectory)/modules
+          - pwsh: Invoke-Build Test -Configuration $(BuildConfiguration)
+            displayName: Run tests
+    - stage: release
+      dependsOn: build
+      variables:
+        version: $[ stageDependencies.build.main.outputs['package.version'] ]
+        vsixVersion: $[ stageDependencies.build.main.outputs['package.vsixVersion'] ]
+        prerelease: $[ stageDependencies.build.main.outputs['package.prerelease'] ]
+        drop: $(Pipeline.Workspace)/drop_build_main
+      jobs:
+      - job: github
+        displayName: Publish draft to GitHub
+        pool:
+          type: windows
+        variables:
+          ob_outputDirectory: $(Build.SourcesDirectory)/out
+        steps:
+        - download: current
+          displayName: Download artifacts
+        - task: GitHubRelease@1
+          displayName: Create GitHub release
+          inputs:
+            gitHubConnection: GitHub
+            repositoryName: PowerShell/vscode-powershell
+            assets: $(drop)/powershell-$(vsixVersion).vsix
+            tagSource: userSpecifiedTag
+            tag: v$(version)
+            isDraft: true
+            isPreRelease: $(prerelease)
+            addChangeLog: false
+            releaseNotesSource: inline
+            releaseNotesInline: "<!-- TODO: Generate release notes on GitHub! -->"
+      - job: validation
+        displayName: Manual validation
+        pool:
+          type: agentless
+        timeoutInMinutes: 1440
+        steps:
+        - task: ManualValidation@0
+          displayName: Wait 24 hours for validation
+          inputs:
+            notifyUsers: $(Build.RequestedForEmail)
+            instructions: Please validate the release and then publish it!
+            timeoutInMinutes: 1440
+      - job: vscode
+        dependsOn: validation
+        displayName: Publish to VS Code Marketplace
+        pool:
+          type: windows
+        variables:
+          ob_outputDirectory: $(Build.SourcesDirectory)/out
+        steps:
+        - download: current
+          displayName: Download artifacts
+        - pwsh: npm ci
+          displayName: Install NPM packages (for vsce)
+        - task: AzureCLI@2
+          displayName: Run vsce publish
+          inputs:
+            azureSubscription: vscode-marketplace
+            scriptType: pscore
+            scriptLocation: inlineScript
+            inlineScript: |
+              $publishArgs = @(
+                '--azure-credential'
+                '--packagePath'
+                '$(drop)/powershell-$(vsixVersion).vsix'
+                if ([bool]::Parse('$(prerelease)')) { '--pre-release' }
+              )
+              npm run publish -- @publishArgs

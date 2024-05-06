@@ -17,7 +17,7 @@ import { spawnSync } from "child_process";
  * */
 async function main(): Promise<void> {
     // Verify that the extension is built
-    const compiledExtensionPath = path.resolve(__dirname, "../main.js");
+    const compiledExtensionPath = path.resolve(__dirname, "../src/extension.js");
     if (!existsSync(compiledExtensionPath)) {
         console.error("ERROR: The extension is not built yet. Please run a build first, using either the 'Run Build Task' in VSCode or ./build.ps1 in PowerShell.");
         process.exit(1);
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
 
     try {
         /** The folder containing the Extension Manifest package.json. Passed to `--extensionDevelopmentPath */
-        const extensionDevelopmentPath = path.resolve(__dirname, "../../");
+        const extensionDevelopmentPath = path.resolve(__dirname, "../");
 
         /** The path to the test script that will run inside the vscode instance. Passed to --extensionTestsPath */
         const extensionTestsPath = path.resolve(__dirname, "./runTestsInner");
@@ -105,9 +105,10 @@ function InstallExtension(vscodeExePath: string, extensionIdOrVSIXPath: string):
     });
 
     if (installResult.status !== 0) {
-        console.error(installResult.stderr);
-        throw new Error(`Failed to install extension: ${installResult.stderr}`);
+        console.error(`Failed to install extension: ${installResult.stderr}`);
+        console.log("Binary Module Tests will fail if not skipped!");
     }
+    
     return installResult.stdout;
 }
 

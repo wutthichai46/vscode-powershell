@@ -27,7 +27,7 @@ task RestoreNodeModules -If { !(Test-Path ./node_modules) } {
     # When in a CI build use the --loglevel=error parameter so that
     # package install warnings don't cause PowerShell to throw up
     if ($env:CI -or $env:TF_BUILD) {
-        Invoke-BuildExec { & npm ci --loglevel=error --ignore-scripts }
+        Invoke-BuildExec { & npm ci --loglevel=error }
     } else {
         Invoke-BuildExec { & npm install }
     }
@@ -76,7 +76,7 @@ task Restore RestoreEditorServices, RestoreNodeModules
 
 task Clean {
     Write-Host "`n### Cleaning vscode-powershell`n" -ForegroundColor Green
-    Remove-BuildItem ./modules, ./out, ./node_modules, *.vsix
+    Remove-BuildItem *.js, *.js.map, ./dist, ./modules, ./node_modules, ./out
 }
 
 task CleanEditorServices -If (Get-EditorServicesPath) {
@@ -101,8 +101,8 @@ task Build Restore, {
     # Unfortunately `esbuild` doesn't support emitting 1:1 files (yet).
     # https://github.com/evanw/esbuild/issues/944
     switch ($Configuration) {
-        "Debug" { Invoke-BuildExec { & npm run build } }
-        "Release" { Invoke-BuildExec { & npm run build -- --minify } }
+        "Debug" { Invoke-BuildExec { & npm run compile } }
+        "Release" { Invoke-BuildExec { & npm run compile -- --minify } }
     }
 }
 
@@ -124,15 +124,13 @@ task TestEditorServices -If (Get-EditorServicesPath) {
 #endregion
 #region Package tasks
 
-task Package Build, {
-    # Sanity check our changelog version versus package.json (which lacks pre-release label)
-    Import-Module $PSScriptRoot/tools/VersionTools.psm1
-    $version = Get-Version -RepositoryName vscode-powershell
-    $packageVersion = Get-MajorMinorPatch -Version $version
-    $packageJson = Get-Content -Raw $PSScriptRoot/package.json | ConvertFrom-Json
-    Assert-Build ($packageJson.version -eq $packageVersion)
+task Package {
+    [semver]$version = $((Get-Content -Raw -Path package.json | ConvertFrom-Json).version)
+    Write-Host "`n### Packaging powershell-$version.vsix`n" -ForegroundColor Green
+    Remove-BuildItem ./out
+    New-Item -ItemType Directory -Force out | Out-Null
 
-    Write-Host "`n### Packaging powershell-$packageVersion.vsix`n" -ForegroundColor Green
+    Assert-Build (Test-Path ./dist/extension.js) "Extension must be built!"
 
     # Packaging requires a copy of the modules folder, not a symbolic link. But
     # we might have built in Debug configuration, not Release, and still want to
@@ -143,7 +141,7 @@ task Package Build, {
         Copy-Item -Recurse -Force "$(Split-Path (Get-EditorServicesPath))/module" ./modules
     }
 
-    if (Test-IsPreRelease) {
+    if ($version.Minor % 2 -ne 0) {
         Write-Host "`n### This is a pre-release!`n" -ForegroundColor Green
         Invoke-BuildExec { & npm run package -- --pre-release }
     } else {
